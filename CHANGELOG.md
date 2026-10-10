@@ -15,6 +15,7 @@ All notable changes to `sustech-cli` are documented in this file.
   headless servers, containers, and CI environments without requiring a desktop
   D-Bus session or `secret-tool`. The encrypted store requires a master password
   on first use and never stores credentials in plaintext.
+- Add read-only SUSTech enterprise-mail access through IMAPS: independent mailbox credential profiles, folder discovery, structured server-side search, UID reads with `BODY.PEEK`, bounded MIME text, attachment metadata, stable JSON/JSONL output, and no public MCP exposure.
 - `tis schedule` now supports `--date YYYY-MM-DD` to query a specific date's
   schedule, resolving the teaching week from the academic calendar automatically.
   The `today` behavior uses `--date` with the current Shanghai date internally.

@@ -275,8 +275,7 @@ interface MailSummary {
 ```bash
 sustech mail read \
   --folder INBOX \
-  --uid 1234 \
-  --include-body
+  --uid 1234
 ```
 
 读取必须使用 `BODY.PEEK[]` 或库的等价选项。返回：

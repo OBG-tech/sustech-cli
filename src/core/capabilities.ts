@@ -5,7 +5,7 @@ export interface Capability {
   summary: string;
   kind: CapabilityKind;
   network: boolean;
-  authentication: "none" | "selected-service" | "sustech-cas" | "tis" | "bb" | "lib-booking" | "booking" | "ws" | "pms" | "nces" | "browser";
+  authentication: "none" | "selected-service" | "sustech-cas" | "tis" | "bb" | "lib-booking" | "booking" | "ws" | "pms" | "nces" | "browser" | "mail";
   confirmation: "none" | "required";
   status: "stable" | "preview";
 }
@@ -129,6 +129,12 @@ export const CAPABILITIES: readonly Capability[] = [
   capability("auth login", "Verify credentials and save them in the operating-system credential store.", "mutation", { status: "preview" }),
   capability("auth status", "Inspect credential-profile and system-store availability without exposing secrets.", "local", { status: "preview" }),
   capability("auth logout", "Delete one local credential profile from the operating-system credential store.", "mutation", { network: false, status: "preview" }),
+  capability("mail auth login", "Verify an IMAPS mailbox password and save it in a separate operating-system credential namespace.", "mutation", { status: "preview" }),
+  capability("mail auth status", "Inspect mailbox credential metadata and secret-store availability without connecting to IMAP.", "local", { network: false, status: "preview" }),
+  capability("mail auth logout", "Delete one local mailbox credential profile.", "mutation", { network: false, status: "preview" }),
+  capability("mail folders", "List accessible mailbox folders and unread counts through IMAPS.", "read", { authentication: "mail", status: "preview" }),
+  capability("mail search", "Search mailbox metadata with server-side structured IMAP filters and optional bounded bodies.", "read", { authentication: "mail", status: "preview" }),
+  capability("mail read", "Read one mailbox message with bounded MIME-decoded text through BODY.PEEK.", "read", { authentication: "mail", status: "preview" }),
   capability("auth check", "Verify credentials against TIS, Blackboard, WS, booking, lib-booking (library-booking alias), or PMS.", "read", { authentication: "selected-service", status: "preview" }),
   capability("tis courses search", "Search the campus-wide course catalog.", "read", { authentication: "tis", status: "preview" }),
   capability("tis courses available", "Search courses available to the authenticated student.", "read", { authentication: "tis", status: "preview" }),

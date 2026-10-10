@@ -61,6 +61,15 @@ sustech tis schedule
 sustech bb deadlines --days 14
 ```
 
+Mailbox reads use a separate IMAPS credential profile:
+
+```bash
+sustech mail auth login --email 12010100@mail.sustech.edu.cn
+sustech mail folders
+sustech mail search --unread --limit 10
+sustech mail read --folder INBOX --uid 1234
+```
+
 Try a command without installing globally:
 
 ```bash
@@ -74,6 +83,7 @@ npm exec --package=sustech-cli -- sustech version
 | Daily snapshot | `context`, `profile show`, `academic changes` | Public calendar plus optional TIS and Blackboard reads |
 | Teaching system | courses, schedule, grades, exams, degree progress, planning, iCalendar | SUSTech account |
 | Blackboard | courses, content, assignments, deadlines, grades, announcements, discussions, files | SUSTech account |
+| Mailbox | folders, structured search, bounded read | Separate IMAPS mailbox credential; read-only |
 | Campus calendar | teaching weeks, holidays, makeup days, term dates | Public |
 | Library | live Primo search/detail, rooms and reservations | Public catalog; account for bookings |
 | Campus services | classrooms, booking, printing, programs, Wi-Fi, transit | Public, local, or account-backed |

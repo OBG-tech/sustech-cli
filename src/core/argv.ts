@@ -27,6 +27,7 @@ export function inferCommandName(argv: string[]): string {
     || (group === "online" && ["talks", "contact", "manual"].includes(command))
     || (group === "academic" && command === "snapshot")
     || (group === "bb" && ["submit", "calendar-link", "discussion-post", "discussion-reply", "message-send"].includes(command))
+    || (group === "mail" && command === "auth")
     || (group === "pms" && (command === "upload" || command === "delete"))
     || (group === "booking" && ["create", "cancel"].includes(command))
     || (group === "lib-booking" && ["create", "cancel"].includes(command))

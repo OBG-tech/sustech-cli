@@ -42,6 +42,30 @@ path, and add `--interactive` when you need to complete the CAS page manually
 in the opened browser window. This path does not accept browser credentials in
 the CLI and does not persist browser cookies.
 
+## Mailbox login
+
+Mailbox credentials are separate from the SUSTech CAS SID/password:
+
+```bash
+sustech mail auth login --email 12010100@mail.sustech.edu.cn
+printf '%s\n' "$MAIL_PASSWORD" | sustech mail auth login --email 12010100@mail.sustech.edu.cn --password-stdin
+sustech mail auth status --json
+sustech mail auth logout
+```
+
+The password or Tencent client authorization code is read from a hidden prompt or
+stdin only. It is verified against `imap.exmail.qq.com:993` over implicit TLS,
+then stored in the independent `cn.edu.sustech.cli.mail` namespace. Mail profile
+metadata is kept in `mail-profiles.json` and never contains the secret. Each
+folders/search/read command opens a fresh IMAPS connection and closes it on every
+path.
+
+The first version is read-only. `mail search` uses structured server-side IMAP
+filters; `mail read` uses `BODY.PEEK` and bounded MIME reads. It does not send,
+reply, forward, delete, move, mark read, download attachment bytes, or expose
+mailbox content through public MCP. TLS certificate and hostname verification
+cannot be disabled by a CLI option.
+
 ## Primo browser mode
 
 The library catalog browser flow is separate from `auth login`:

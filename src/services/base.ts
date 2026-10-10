@@ -1,7 +1,7 @@
 import { CliError } from "../core/errors.js";
 
 export type ServiceAvailability = "implemented" | "adapter_required" | "unavailable";
-export type ServiceAuthMode = "none" | "cookie-session" | "bearer-header" | "browser";
+export type ServiceAuthMode = "none" | "cookie-session" | "bearer-header" | "browser" | "imap-tls";
 
 export interface ServiceStatus {
   service: string;

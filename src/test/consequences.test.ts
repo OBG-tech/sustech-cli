@@ -26,6 +26,8 @@ const MUTATION_CONSEQUENCES: Readonly<Record<string, readonly string[]>> = {
   "pms delete apply": ["pms.delete"],
   "auth login": ["credentials.store"],
   "auth logout": ["credentials.delete"],
+  "mail auth login": ["mail.credentials.store"],
+  "mail auth logout": ["mail.credentials.delete"],
   "tis ical": ["tis.ical.export"],
   "tis selection apply": ["tis.enroll", "tis.drop", "tis.cart.update", "tis.bid"],
   "tis bid apply": ["tis.bid"],

@@ -49,15 +49,24 @@ import { assertPathAndParentsAreNotSymlinks } from "./core/local-store.js";
 import {
   DEFAULT_CREDENTIAL_PROFILE,
   deleteStoredCredentials,
+  deleteStoredMailCredentials,
   getCredentialBackendStatus,
   getCredentialStatus,
+  getMailCredentialBackendStatus,
+  getMailProfileStatus,
+  loadStoredMailCredentials,
   maskSid,
   saveStoredCredentials,
+  saveStoredMailCredentials,
   validateCredentialPassword,
   validateCredentialSid,
+  validateMailEmail,
   validateProfileName,
   type CredentialStoreOptions,
 } from "./core/keyring.js";
+import { MailClient } from "./mail/client.js";
+import { formatMailFolders, formatMailMessage, formatMailSummaries } from "./mail/text.js";
+import type { MailCredentials, MailMessage, MailSummary } from "./mail/types.js";
 import {
   inferOutputOptions,
   resolveOutputOptions,
@@ -434,6 +443,12 @@ Usage:
   sustech auth login [--profile NAME] [--sid SID] [--service bb|tis|ws|booking|lib-booking|pms] [--password-stdin]
   sustech auth status [--profile NAME]
   sustech auth logout [--profile NAME]
+  sustech mail auth login --email ADDRESS [--profile NAME] [--password-stdin]
+  sustech mail auth status [--profile NAME]
+  sustech mail auth logout [--profile NAME]
+  sustech mail folders [--profile NAME]
+  sustech mail search [--folder NAME] [--unread] [--from ADDRESS] [--to ADDRESS] [--subject TEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N] [--include-body] [--profile NAME]
+  sustech mail read --folder NAME --uid N [--uid-validity VALUE] [--profile NAME]
   sustech auth check [--profile NAME] [--service tis|bb|ws|booking|lib-booking|library-booking|pms] [--credentials-file PATH] [--browser [--interactive]] [--json|--jsonl]
   sustech calendar terms [--year YYYY] [--calendar-level undergraduate|graduate]
   sustech calendar day [YYYY-MM-DD|--date YYYY-MM-DD] [--calendar-level undergraduate|graduate]
@@ -623,6 +638,14 @@ type Values = OutputFlags & {
   "column-id"?: string;
   file?: string;
   subject?: string;
+  email?: string;
+  folder?: string;
+  from?: string;
+  to?: string;
+  unread?: boolean;
+  "include-body"?: boolean;
+  uid?: string;
+  "uid-validity"?: string;
   "to-user"?: string[];
   "cc-user"?: string[];
   "bcc-user"?: string[];
@@ -871,6 +894,10 @@ async function main(argv: string[]): Promise<void> {
   }
   if (group === "auth") {
     await runAuth(parsed.positionals, values, output);
+    return;
+  }
+  if (group === "mail") {
+    await runMail(parsed.positionals, values, output);
     return;
   }
   if (group === "transit") {
@@ -2176,6 +2203,86 @@ async function main(argv: string[]): Promise<void> {
   }
 
   throw usageError(`Unknown command: ${parsed.positionals.join(" ")}`);
+}
+
+async function runMail(positionals: readonly string[], values: Values, output: OutputOptions): Promise<void> {
+  const [, command, operation] = positionals;
+  const credentialStoreOptions = credentialStoreOptionsFromEnv();
+  if (command === "auth") {
+    if (positionals.length !== 3 || !operation) throw usageError(`Unknown command: ${positionals.join(" ")}`);
+    if (operation === "login") {
+      if (!values.email) throw usageError("--email is required for mail auth login.");
+      const email = validateMailEmail(values.email);
+      const backend = await getMailCredentialBackendStatus(credentialStoreOptions);
+      if (!backend.available) throw new CliError(backend.reason ?? "No secure system credential store is available.", "MAIL_CREDENTIALS_INVALID", 2, { backend: backend.backend, ...(backend.remediation ? { remediation: backend.remediation } : {}) });
+      const password = values["password-stdin"] ? await readPasswordFromStdin() : await promptHiddenPassword();
+      const credentials: MailCredentials = { email, password, profile: validateProfileName(values.profile ?? DEFAULT_CREDENTIAL_PROFILE), source: "system-keyring" };
+      await new MailClient({ credentialStore: credentialStoreOptions }).verifyCredentials(credentials);
+      const stored = await saveStoredMailCredentials({ profile: credentials.profile, email, password }, credentialStoreOptions);
+      writeSuccess({
+        command: "mail auth login",
+        data: { authenticated: true, credentialsStored: true, profile: stored.profile, email: stored.email, backend: stored.backend, persistent: stored.persistent, storedAt: stored.storedAt },
+        text: `Mail credentials verified for ${stored.email}.\nSaved profile '${stored.profile}' to ${stored.backend}.`,
+      }, output);
+      return;
+    }
+    if (operation === "status") {
+      const status = await getMailProfileStatus(values.profile, credentialStoreOptions);
+      writeSuccess({
+        command: "mail auth status",
+        data: status,
+        text: [`Mail profile '${status.profile}': ${status.credentialAvailable ? "ready" : status.configured ? "secret missing or locked" : "not configured"}`, `Backend: ${status.backend} (${status.backendAvailable ? "available" : "unavailable"}, ${status.persistent ? "persistent" : "non-persistent"})`, ...(status.email ? [`Email: ${status.email}`] : []), ...(status.reason ? [`Reason: ${status.reason}`] : [])].join("\n"),
+      }, output);
+      return;
+    }
+    if (operation === "logout") {
+      const result = await deleteStoredMailCredentials(values.profile, credentialStoreOptions);
+      writeSuccess({ command: "mail auth logout", data: result, text: result.removed ? `Removed mail profile '${result.profile}' from ${result.backend}.` : `Mail profile '${result.profile}' was not configured.` }, output);
+      return;
+    }
+    throw usageError(`Unknown command: ${positionals.join(" ")}`);
+  }
+
+  const client = new MailClient({ credentialStore: credentialStoreOptions });
+  if (command === "folders" && positionals.length === 2) {
+    const credentials = await loadStoredMailCredentials(values.profile, credentialStoreOptions);
+    const mailCredentials: MailCredentials = { ...credentials, source: "system-keyring" };
+    const folders = await client.folders(mailCredentials);
+    writeSuccess({ command: "mail folders", data: { folders, total: folders.length }, text: formatMailFolders(folders), items: folders, summary: { total: folders.length } }, output);
+    return;
+  }
+  if (command === "search" && positionals.length === 2) {
+    const since = values.since === undefined ? undefined : isoDate(values.since, "--since");
+    const until = values.until === undefined ? undefined : isoDate(values.until, "--until");
+    if (since && until && since > until) throw usageError("--since cannot be later than --until.");
+    if (values.from && values.from.length > 320) throw usageError("--from cannot exceed 320 characters.");
+    if (values.to && values.to.length > 320) throw usageError("--to cannot exceed 320 characters.");
+    if (values.subject && values.subject.length > 200) throw usageError("--subject cannot exceed 200 characters.");
+    const limit = parsePositiveInteger(values.limit, 20, "--limit");
+    if (limit > 50) throw usageError("--limit cannot exceed 50.");
+    const includeBody = Boolean(values["include-body"]);
+    const credentials = await loadStoredMailCredentials(values.profile, credentialStoreOptions);
+    const mailCredentials: MailCredentials = { ...credentials, source: "system-keyring" };
+    const messages = await client.search(mailCredentials, { folder: values.folder ?? "INBOX", unread: Boolean(values.unread), from: values.from, to: values.to, subject: values.subject, since, until, limit, includeBody });
+    const text = includeBody
+      ? messages.map((message) => {
+        if (!("textBody" in message)) throw new CliError("Mail body was not included in the search result.", "MAIL_MESSAGE_PARSE_FAILED", 1);
+        return formatMailMessage(message);
+      }).join("\n\n") || "Mail search · 0\n  (none)"
+      : formatMailSummaries(messages);
+    writeSuccess({ command: "mail search", data: { folder: values.folder ?? "INBOX", unread: Boolean(values.unread), from: values.from, to: values.to, subject: values.subject, since, until, limit, includeBody, messages, total: messages.length }, text, items: messages, summary: { total: messages.length, includeBody } }, output);
+    return;
+  }
+  if (command === "read" && positionals.length === 2) {
+    const folder = required(values.folder, "--folder");
+    const uid = parsePositiveInteger(required(values.uid, "--uid"), 0, "--uid");
+    const credentials = await loadStoredMailCredentials(values.profile, credentialStoreOptions);
+    const mailCredentials: MailCredentials = { ...credentials, source: "system-keyring" };
+    const message = await client.read(mailCredentials, { folder, uid, uidValidity: values["uid-validity"] });
+    writeSuccess({ command: "mail read", data: message, text: formatMailMessage(message) }, output);
+    return;
+  }
+  throw usageError(`Unknown command: ${positionals.join(" ")}`);
 }
 
 async function runAuth(positionals: readonly string[], values: Values, output: OutputOptions): Promise<void> {

@@ -97,7 +97,12 @@ const BLACKBOARD_CALENDAR_LINK_NAMESPACE: SecretNamespace = {
   service: BLACKBOARD_CALENDAR_LINK_SERVICE,
   linuxLabel: "SUSTech CLI Blackboard calendar",
 };
+const MAIL_CREDENTIAL_NAMESPACE: SecretNamespace = {
+  service: "cn.edu.sustech.cli.mail",
+  linuxLabel: "SUSTech CLI mail",
+};
 
+export const SUSTECH_MAIL_CREDENTIAL_SERVICE = MAIL_CREDENTIAL_NAMESPACE.service;
 export async function loadStoredCredentials(
   requestedProfile?: string,
   options: CredentialStoreOptions = {},
@@ -389,6 +394,196 @@ export async function deleteStoredBlackboardCalendarLink(
   } catch (error) {
     throw storeAccessError("Blackboard calendar link", "delete", store.backend, error);
   }
+}
+
+export interface StoredMailCredentials {
+  email: string;
+  password: string;
+  profile: string;
+  backend: CredentialBackend;
+}
+
+export interface MailProfileStatus {
+  profile: string;
+  configured: boolean;
+  credentialAvailable: boolean;
+  email?: string;
+  backend: CredentialBackend | "unavailable";
+  backendAvailable: boolean;
+  persistent: boolean;
+  storedAt?: string;
+  profiles: string[];
+  reason?: string;
+  remediation?: string;
+}
+
+interface MailProfileMetadata {
+  email: string;
+  account: string;
+  backend: CredentialBackend;
+  storedAt: string;
+}
+
+interface MailProfileConfig {
+  schemaVersion: "1";
+  profiles: Record<string, MailProfileMetadata>;
+}
+
+export async function loadStoredMailCredentials(
+  requestedProfile?: string,
+  options: CredentialStoreOptions = {},
+): Promise<StoredMailCredentials> {
+  const config = await readMailProfileConfig(options);
+  const profile = selectedMailProfile(requestedProfile, options.env);
+  const stored = config.profiles[profile];
+  if (!stored) {
+    throw new CliError(`Mail profile '${profile}' is not configured. Run 'sustech mail auth login --profile ${profile}'.`, "MAIL_PROFILE_NOT_FOUND", 2, { profile });
+  }
+  const resolution = await resolveBackendForNamespace(options, MAIL_CREDENTIAL_NAMESPACE);
+  const store = requireMatchingStore(resolution, stored.backend);
+  let password: string | undefined;
+  try {
+    password = await store.get(stored.account);
+  } catch (error) {
+    throw storeAccessError("mail credentials", "read", store.backend, error);
+  }
+  if (!password) {
+    throw new CliError("Mail profile is configured, but its secret is unavailable.", "MAIL_CREDENTIALS_REQUIRED", 2, { profile });
+  }
+  return { email: stored.email, password, profile, backend: stored.backend };
+}
+
+export async function saveStoredMailCredentials(
+  input: { profile?: string; email: string; password: string },
+  options: CredentialStoreOptions = {},
+): Promise<{ profile: string; email: string; backend: CredentialBackend; persistent: true; storedAt: string }> {
+  const profile = validateProfileName(input.profile ?? DEFAULT_CREDENTIAL_PROFILE);
+  const email = validateMailEmail(input.email);
+  const password = validateStoredSecret(input.password, "Mail password", "MAIL_CREDENTIALS_INVALID");
+  const config = await readMailProfileConfig(options);
+  const existing = config.profiles[profile];
+  const resolution = await resolveBackendForNamespace(options, MAIL_CREDENTIAL_NAMESPACE);
+  const store = requireAvailableStore(resolution);
+  if (existing && existing.email !== email) {
+    throw new CliError(`Mail profile '${profile}' already belongs to another address.`, "MAIL_CREDENTIALS_INVALID", 2, { profile });
+  }
+  if (existing && existing.backend !== store.backend) {
+    throw new CliError(`Mail profile '${profile}' was created with another credential backend.`, "MAIL_CREDENTIALS_INVALID", 2, { profile });
+  }
+  const account = existing?.account ?? profile;
+  let previousPassword: string | undefined;
+  let secretTouched = false;
+  try {
+    previousPassword = await store.get(account);
+    await store.set(account, password);
+    secretTouched = true;
+    if (await store.get(account) !== password) throw new Error("Credential store write could not be verified.");
+  } catch (error) {
+    if (secretTouched && !await restoreSecret(store, account, previousPassword)) throw credentialRollbackError("save", store.backend);
+    throw storeAccessError("mail credentials", "write", store.backend, error);
+  }
+  const storedAt = new Date().toISOString();
+  try {
+    await writeMailProfileConfig({ schemaVersion: "1", profiles: { ...config.profiles, [profile]: { email, account, backend: store.backend, storedAt } } }, options);
+  } catch (error) {
+    if (!await restoreSecret(store, account, previousPassword)) throw credentialRollbackError("save", store.backend);
+    throw error;
+  }
+  return { profile, email, backend: store.backend, persistent: true, storedAt };
+}
+
+export async function getMailProfileStatus(requestedProfile?: string, options: CredentialStoreOptions = {}): Promise<MailProfileStatus> {
+  const config = await readMailProfileConfig(options);
+  const profile = selectedMailProfile(requestedProfile, options.env);
+  const profiles = Object.keys(config.profiles).sort();
+  const stored = config.profiles[profile];
+  const resolution = await resolveBackendForNamespace(options, MAIL_CREDENTIAL_NAMESPACE);
+  if (!stored) return { profile, configured: false, credentialAvailable: false, backend: resolution.backend, backendAvailable: resolution.available, persistent: resolution.persistent, profiles, ...(resolution.reason ? { reason: resolution.reason } : {}), ...(resolution.remediation ? { remediation: resolution.remediation } : {}) };
+  if (!resolution.store || resolution.store.backend !== stored.backend) return { profile, configured: true, credentialAvailable: false, email: stored.email, backend: stored.backend, backendAvailable: false, persistent: true, storedAt: stored.storedAt, profiles, reason: resolution.reason ?? `The current credential backend does not match ${stored.backend}.` };
+  try {
+    const credentialAvailable = resolution.store.has ? await resolution.store.has(stored.account) : Boolean(await resolution.store.get(stored.account));
+    return { profile, configured: true, credentialAvailable, email: stored.email, backend: stored.backend, backendAvailable: true, persistent: true, storedAt: stored.storedAt, profiles, ...(!credentialAvailable ? { reason: "The mail profile secret is missing from the credential store." } : {}) };
+  } catch (error) {
+    return { profile, configured: true, credentialAvailable: false, email: stored.email, backend: stored.backend, backendAvailable: false, persistent: true, storedAt: stored.storedAt, profiles, reason: safeStoreReason(error) };
+  }
+}
+
+export async function deleteStoredMailCredentials(requestedProfile?: string, options: CredentialStoreOptions = {}): Promise<{ profile: string; removed: boolean; backend: CredentialBackend | "unavailable" }> {
+  const config = await readMailProfileConfig(options);
+  const profile = selectedMailProfile(requestedProfile, options.env);
+  const stored = config.profiles[profile];
+  if (!stored) return { profile, removed: false, backend: "unavailable" };
+  const resolution = await resolveBackendForNamespace(options, MAIL_CREDENTIAL_NAMESPACE);
+  const store = requireMatchingStore(resolution, stored.backend);
+  try {
+    const removed = await store.delete(stored.account);
+    if (await store.get(stored.account) !== undefined) throw new Error("Credential deletion could not be verified.");
+    const profiles = { ...config.profiles };
+    delete profiles[profile];
+    await writeMailProfileConfig({ schemaVersion: "1", profiles }, options);
+    return { profile, removed, backend: store.backend };
+  } catch (error) {
+    throw storeAccessError("mail credentials", "delete", store.backend, error);
+  }
+}
+
+export async function getMailCredentialBackendStatus(options: CredentialStoreOptions = {}): Promise<CredentialBackendStatus> {
+  const { store: _store, ...status } = await resolveBackendForNamespace(options, MAIL_CREDENTIAL_NAMESPACE);
+  return status;
+}
+
+function selectedMailProfile(requestedProfile: string | undefined, customEnv: NodeJS.ProcessEnv | undefined): string {
+  const env = customEnv ?? process.env;
+  return validateProfileName(requestedProfile ?? env.SUSTECH_MAIL_PROFILE?.trim() ?? DEFAULT_CREDENTIAL_PROFILE);
+}
+
+export function validateMailEmail(value: string): string {
+  const email = value.trim();
+  if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || /[\u0000-\u001f\u007f]/.test(email)) throw new CliError("Mail address must be a complete valid email address.", "MAIL_CREDENTIALS_INVALID", 2);
+  return email;
+}
+
+async function readMailProfileConfig(options: CredentialStoreOptions): Promise<MailProfileConfig> {
+  const path = mailProfileConfigPath(options);
+  try {
+    const value = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (!isMailProfileConfig(value)) throw new Error("invalid shape");
+    return value;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return { schemaVersion: "1", profiles: {} };
+    if (error instanceof CliError) throw error;
+    throw new CliError("Mail profile metadata is invalid; refusing to overwrite it.", "MAIL_CREDENTIALS_INVALID", 2, { path });
+  }
+}
+
+async function writeMailProfileConfig(config: MailProfileConfig, options: CredentialStoreOptions): Promise<void> {
+  const directory = credentialConfigDirectory(options);
+  const path = join(directory, "mail-profiles.json");
+  const temporary = join(directory, `.mail-profiles.${randomUUID()}.tmp`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw new CliError("Could not write mail profile metadata.", "MAIL_CREDENTIALS_INVALID", 2, { path, reason: isNodeError(error) ? error.code : "unknown" });
+  }
+}
+
+function mailProfileConfigPath(options: CredentialStoreOptions): string {
+  return join(credentialConfigDirectory(options), "mail-profiles.json");
+}
+
+function isMailProfileConfig(value: unknown): value is MailProfileConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== "1" || !record.profiles || typeof record.profiles !== "object" || Array.isArray(record.profiles)) return false;
+  for (const [profile, entry] of Object.entries(record.profiles as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(profile) || !entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const stored = entry as Record<string, unknown>;
+    if (typeof stored.email !== "string" || typeof stored.account !== "string" || !isCredentialBackend(stored.backend) || typeof stored.storedAt !== "string") return false;
+  }
+  return true;
 }
 
 export function validateProfileName(value: string): string {

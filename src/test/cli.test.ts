@@ -58,6 +58,22 @@ test("bare invocation shows a local account dashboard while explicit help stays 
   assert.doesNotMatch(help.stdout, /:\*##: :#######:/);
   assert.match(help.stdout, /^sustech — SUSTech services/);
 });
+test("mail commands are discoverable, structured, and validate before credential lookup", () => {
+  const help = run(["--help"]);
+  assert.match(help.stdout, /sustech mail search/u);
+  const described = run(["describe", "mail", "search", "--json"]);
+  assert.equal(described.status, 0);
+  const options = JSON.parse(described.stdout).data.options.map((option: { name: string }) => option.name);
+  assert.ok(options.includes("--unread"));
+  assert.ok(options.includes("--include-body"));
+  const invalid = runWithoutCredentials(["mail", "search", "--limit", "0", "--json"]);
+  assert.equal(invalid.status, 2);
+  assert.equal(JSON.parse(invalid.stdout).error.code, "USAGE");
+  const status = runWithoutCredentials(["mail", "auth", "status", "--json"]);
+  assert.equal(status.status, 0);
+  assert.equal(JSON.parse(status.stdout).data.configured, false);
+});
+
 
 test("auth status and logout unlock the Linux encrypted-file store from the master-password environment", async () => {
   const configRoot = mkdtempSync(join(tmpdir(), "sustech-cli-encrypted-cli-"));

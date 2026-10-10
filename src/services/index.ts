@@ -1,3 +1,4 @@
+import { MAIL_STATUS } from "./mail.js";
 import { BLACKBOARD_STATUS } from "./blackboard.js";
 import { BOOKING_STATUS } from "./booking.js";
 import { LIBRARY_BOOKING_STATUS, LIBRARY_CATALOG_STATUS } from "./library.js";
@@ -18,6 +19,7 @@ export const SERVICE_STATUSES: readonly ServiceStatus[] = [
   NCES_STATUS,
   PAPERS_STATUS,
   SUSTECH_ONLINE_STATUS,
+  MAIL_STATUS,
 ] as const;
 
 export function serviceStatus(name: string): ServiceStatus | undefined {
@@ -66,4 +68,5 @@ export * from "./papers.js";
 export * from "./pms-auth.js";
 export * from "./pms.js";
 export * from "./sustech-online.js";
+export * from "./mail.js";
 export * from "./ws.js";
